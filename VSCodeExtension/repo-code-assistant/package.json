@@ -15,6 +15,7 @@
   "publisher": "whats2000_",
   "main": "extension.js",
   "scripts": {
+    "test": "jest",
     "bundle": "webpack --mode production && webpack --mode production --config ./webpack.config.views.js",
     "build": "rd /s /q dist 2>nul & mkdir dist & copy LICENSE.md dist\\ & rd /s /q build 2>nul & mkdir build & npm run bundle & node scripts/build.js",
     "watch": "webpack --mode development --watch",

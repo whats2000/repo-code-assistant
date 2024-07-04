@@ -104,6 +104,8 @@ class SettingsManager {
         'mixtral-8x7b-32768',
         'gemma-7b-it',
       ],
+      gptSoVitsApiUrl: '',
+      gptSoVitsAvailableModels: [''],
       huggingFaceApiKey: '',
       huggingFaceAvailableModels: ['HuggingFaceH4/zephyr-7b-beta'],
       ollamaClientHost: 'http://localhost:11434',

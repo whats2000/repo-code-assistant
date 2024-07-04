@@ -2,7 +2,7 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "outDir": "out",
-    "types": ["node"],
+    "types": ["node", "jest"],
     "module": "CommonJS",
     "target": "ES2021",
     "moduleResolution": "node",
@@ -18,7 +18,7 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "resolveJsonModule": true,
-    "esModuleInterop": true,
+    "esModuleInterop": true
   },
   "include": ["./**/*.ts", "./**/*.tsx"],
   "exclude": ["node_modules"]

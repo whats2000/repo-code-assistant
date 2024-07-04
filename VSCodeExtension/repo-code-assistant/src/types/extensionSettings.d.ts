@@ -105,6 +105,16 @@ export type ExtensionSettings = {
   ollamaAvailableModels: string[];
 
   /**
+   * The APIUrl for the GPT-SoVits model.
+   */
+  gptSoVitsApiUrl: string;
+
+  /**
+   * The available models for the GPT-SoVits API.
+   */
+  gptSoVitsAvailableModels: string[];
+
+  /**
    * Determines if the model is enabled for code generation.
    */
   enableModel: {
