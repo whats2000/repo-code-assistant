@@ -45,7 +45,7 @@ export class gptAPIService extends AbstractVoiceService {
         fs.writeFileSync(mp3FilePath, buffer);
         return mp3FilePath;
       }catch(err){
-        return 'Failed to Voice to Text.';
+        return 'Failed on Text to Speech.';
       }
     }
 
@@ -59,9 +59,9 @@ export class gptAPIService extends AbstractVoiceService {
           model: "whisper-1",
           response_format: "text",
         });
-        return transcription.text;
+        return transcription;
       }catch(err){
-        return 'Failed to Speech to Text.';
+        return 'Failed on Speech to Text.';
       }    
   }
 }
