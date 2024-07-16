@@ -205,6 +205,11 @@
             "type": "string"
           }
         },
+        "repo-code-assistant.starcoder2.apiEndpoint": {
+          "type": "string",
+          "default": "https://localhost:11434/api/generate",
+          "description": "API endpoint for the Wizard Coder extension."
+        },
         "repo-code-assistant.enableModel": {
           "type": "object",
           "properties": {
@@ -498,6 +503,7 @@
     "css-loader": "^7.1.2",
     "groq-sdk": "^0.4.0",
     "markdown-to-text": "^0.1.1",
+    "node-fetch": "^2.7.0",
     "ollama": "^0.5.1",
     "openai": "^4.47.1",
     "react-markdown": "^9.0.1",

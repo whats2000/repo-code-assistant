@@ -30,6 +30,8 @@ import { CustomApiService } from './services/languageModel/customApiService';
 import { GptSoVitsApiService } from './services/Voice/gptSoVitsService';
 import { Uri } from 'vscode';
 
+import { Starcoder2InlineCompletionItemProvider } from './views/components/common/InlineCompletionItemProvider';
+
 export const activate = async (ctx: vscode.ExtensionContext) => {
   const connectedViews: Partial<Record<ViewKey, vscode.WebviewView>> = {};
   const settingsManager = SettingsManager.getInstance();
@@ -555,6 +557,14 @@ export const activate = async (ctx: vscode.ExtensionContext) => {
   registerAndConnectView('workPanel').catch((e) => {
     console.error(e);
   });
+
+  const provider = new Starcoder2InlineCompletionItemProvider();
+  ctx.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider(
+      { scheme: 'file', language: 'typescript' },
+      provider,
+    ),
+  );
 };
 
 export const deactivate = () => {
