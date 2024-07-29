@@ -1,21 +1,21 @@
 import React, { useContext, useEffect, useRef } from 'react';
-import { Button, Form, Space } from 'antd';
+import { Button, Form, Space, Tooltip } from 'antd';
+import type { DragEndEvent } from '@dnd-kit/core';
 import {
+  PointerSensor,
   DndContext,
   closestCenter,
-  PointerSensor,
   useSensor,
   useSensors,
-  DragEndEvent,
 } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidV4 } from 'uuid';
 
-import { ModelServiceType } from '../../../../../types';
+import type { ModelServiceType } from '../../../../../types';
 import { WebviewContext } from '../../../../WebviewContext';
 import { ModelFormSortableItem } from './ModelForm/ModelFormSortableItem';
 
@@ -23,7 +23,7 @@ type ModelFormProps = {
   isOpen: boolean;
   isLoading: boolean;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  activeModelService: ModelServiceType | 'loading...';
+  activeModelService: Exclude<ModelServiceType, 'custom'> | 'loading...';
   availableModels: string[];
   setAvailableModels: React.Dispatch<React.SetStateAction<string[]>>;
   handleEditModelListSave: (models: string[]) => void;
@@ -46,7 +46,7 @@ export const ModelForm: React.FC<ModelFormProps> = ({
   const { callApi } = useContext(WebviewContext);
 
   const modelsWithId = useRef(
-    availableModels.map((model) => ({ id: uuidv4(), name: model })),
+    availableModels.map((model) => ({ id: uuidV4(), name: model })),
   );
 
   const sensors = useSensors(
@@ -103,7 +103,7 @@ export const ModelForm: React.FC<ModelFormProps> = ({
   };
 
   const handleAddAvailableModel = () => {
-    const newModel = { id: uuidv4(), name: '' };
+    const newModel = { id: uuidV4(), name: '' };
     modelsWithId.current = [...modelsWithId.current, newModel];
     setAvailableModels(modelsWithId.current.map((model) => model.name));
   };
@@ -168,26 +168,39 @@ export const ModelForm: React.FC<ModelFormProps> = ({
             items={modelsWithId.current.map((model) => model.id)}
             strategy={verticalListSortingStrategy}
           >
-            {modelsWithId.current.map((model, index) => (
-              <ModelFormSortableItem
-                key={model.id}
-                id={model.id}
-                index={index}
-                value={model.name}
-                onChange={handleAvailableModelChange}
-                onRemove={handleRemoveAvailableModel}
-              />
-            ))}
+            {modelsWithId.current
+              .filter(
+                (model, index) =>
+                  !(
+                    activeModelService === 'ollama' &&
+                    index === 0 &&
+                    model.name === 'Auto Detect'
+                  ),
+              )
+              .map((model, index) => (
+                <ModelFormSortableItem
+                  key={model.id}
+                  id={model.id}
+                  index={index}
+                  value={model.name}
+                  onChange={handleAvailableModelChange}
+                  onRemove={handleRemoveAvailableModel}
+                />
+              ))}
           </SortableContext>
         </DndContext>
-        <Button
-          type='primary'
-          ghost={true}
-          onClick={handleFetchLatestAvailableModels}
-          block
-        >
-          Fetch Latest Models
-        </Button>
+        <Tooltip title='Notice: This will also remove the outdated models from the list'>
+          <Button
+            type='primary'
+            ghost={true}
+            onClick={handleFetchLatestAvailableModels}
+            block
+          >
+            {activeModelService === 'ollama'
+              ? 'Fetch available models from host server'
+              : 'Fetch Latest Available Models'}
+          </Button>
+        </Tooltip>
         <Button type='dashed' onClick={handleAddAvailableModel} block>
           Add Model
         </Button>

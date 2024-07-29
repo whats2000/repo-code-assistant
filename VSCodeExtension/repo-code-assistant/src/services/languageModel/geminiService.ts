@@ -1,15 +1,23 @@
 import * as vscode from 'vscode';
 import fs from 'fs';
-import type { Content, InlineDataPart } from '@google/generative-ai';
+import {
+  Content,
+  FunctionCall,
+  FunctionDeclarationSchemaType,
+  GenerativeModel,
+  InlineDataPart,
+  Tool,
+} from '@google/generative-ai';
 import {
   GoogleGenerativeAI,
   HarmBlockThreshold,
   HarmCategory,
 } from '@google/generative-ai';
 
-import type { ConversationEntry } from '../../types';
+import type { ConversationEntry, GetResponseOptions } from '../../types';
 import { AbstractLanguageModelService } from './abstractLanguageModelService';
-import SettingsManager from '../../api/settingsManager';
+import { SettingsManager } from '../../api';
+import { ToolService } from '../tools';
 
 type GeminiModel = {
   name: string;
@@ -59,16 +67,59 @@ export class GeminiService extends AbstractLanguageModelService {
     },
   ];
 
+  private readonly tools: Tool[] = [
+    {
+      functionDeclarations: [
+        {
+          name: 'webSearch',
+          description: `
+          Use this tool to fetch the latest information from the web, especially for time-sensitive or recent data.
+          
+          Guidelines:
+          1. Ensure queries are well-defined. Example: 'Google AI recent developments 2024'.
+          2. Utilize this tool for queries involving recent events or updates.
+          3. Refuse only if the query is unclear or beyond the tool's scope. Suggest refinements if needed.
+          4. Extract up to 6000 characters per webpage. Default to 4 results.
+          
+          Validate information before presenting and provide balanced views if there are discrepancies.
+        `,
+          parameters: {
+            type: FunctionDeclarationSchemaType.OBJECT,
+            properties: {
+              query: {
+                type: FunctionDeclarationSchemaType.STRING,
+                description:
+                  'The query to search for. Ensure the query is specific and well-defined to get precise results.',
+                example: 'Google AI recent developments 2024',
+              },
+              maxCharsPerPage: {
+                type: FunctionDeclarationSchemaType.NUMBER,
+                description:
+                  'The maximum number of characters to extract from each webpage. Default is 6000. Adjust if a different limit is required.',
+                nullable: true,
+              },
+              numResults: {
+                type: FunctionDeclarationSchemaType.NUMBER,
+                description:
+                  'The number of results to return. Default is 4. Modify if more or fewer results are needed.',
+                nullable: true,
+              },
+            },
+          },
+        },
+      ],
+    },
+  ];
+
   constructor(
     context: vscode.ExtensionContext,
     settingsManager: SettingsManager,
   ) {
-    const availableModelNames = settingsManager.get(
-      'geminiAvailableModels',
-    ) || ['gemini-1.5-pro-latest', 'gemini-1.5-flash-latest'];
-    const defaultModelName = availableModelNames[0];
+    const availableModelNames = settingsManager.get('geminiAvailableModels');
+    const defaultModelName = settingsManager.get('lastSelectedModel').gemini;
 
     super(
+      'gemini',
       context,
       'geminiConversationHistory.json',
       settingsManager,
@@ -85,14 +136,8 @@ export class GeminiService extends AbstractLanguageModelService {
 
     // Listen for settings changes
     this.settingsListener = vscode.workspace.onDidChangeConfiguration((e) => {
-      if (
-        e.affectsConfiguration('repo-code-assistant.geminiApiKey') ||
-        e.affectsConfiguration('repo-code-assistant.geminiAvailableModels')
-      ) {
+      if (e.affectsConfiguration('repo-code-assistant.geminiApiKey')) {
         this.apiKey = settingsManager.get('geminiApiKey');
-        this.availableModelNames = settingsManager.get(
-          'geminiAvailableModels',
-        ) || ['gemini-1.5-pro-latest', 'gemini-1.5-flash-latest'];
       }
     });
 
@@ -188,67 +233,116 @@ export class GeminiService extends AbstractLanguageModelService {
     return newAvailableModelNames;
   }
 
-  public async getResponseForQuery(
-    query: string,
-    currentEntryID?: string,
-  ): Promise<string> {
-    const genAI = new GoogleGenerativeAI(this.apiKey);
-    const model = genAI.getGenerativeModel({ model: this.currentModel });
+  private async handleFunctionCalls(
+    functionCalls: FunctionCall[],
+    updateStatus?: (status: string) => void,
+  ): Promise<string[]> {
+    const functionCallResults: string[] = [];
 
-    const history = currentEntryID
-      ? this.getHistoryBeforeEntry(currentEntryID)
-      : this.history;
+    for (const functionCall of functionCalls) {
+      const tool = ToolService.getTool(functionCall.name);
+      if (!tool) {
+        functionCallResults.push(
+          `Failed to find tool with name: ${functionCall.name}`,
+        );
+        continue;
+      }
 
-    const conversationHistory = this.conversationHistoryToContent(
-      history.entries,
-    );
-
-    try {
-      const chat = model.startChat({
-        generationConfig: this.generationConfig,
-        safetySettings: this.safetySettings,
-        history: conversationHistory,
-      });
-
-      const result = await chat.sendMessage(query);
-      return result.response.text();
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        'Failed to get response from Gemini Service: ' + error,
-      );
-      return 'Failed to connect to the language model service.';
+      try {
+        const args = { ...functionCall.args, updateStatus };
+        const result = await tool(args as any);
+        functionCallResults.push(result);
+      } catch (error) {
+        functionCallResults.push(
+          `Error executing tool ${functionCall.name}: ${error}`,
+        );
+      }
     }
+
+    return functionCallResults;
   }
 
-  public async getResponseChunksForQuery(
+  private async getResponseChunksWithTextPayload(
+    generativeModel: GenerativeModel,
     query: string,
-    sendStreamResponse: (msg: string) => void,
-    currentEntryID?: string,
+    conversationHistory: Content[],
+    sendStreamResponse?: (message: string) => void,
+    updateStatus?: (status: string) => void,
   ): Promise<string> {
-    const genAI = new GoogleGenerativeAI(this.apiKey);
-    const model = genAI.getGenerativeModel({ model: this.currentModel });
-
-    const history = currentEntryID
-      ? this.getHistoryBeforeEntry(currentEntryID)
-      : this.history;
-
-    const conversationHistory = this.conversationHistoryToContent(
-      history.entries,
-    );
-
     try {
-      const chat = model.startChat({
+      if (!sendStreamResponse) {
+        const result = await generativeModel
+          .startChat({
+            generationConfig: this.generationConfig,
+            safetySettings: this.safetySettings,
+            history: conversationHistory,
+            tools: this.tools,
+          })
+          .sendMessage(query);
+
+        if (result.response.functionCalls()) {
+          const functionCallResults = await this.handleFunctionCalls(
+            result.response.functionCalls() as FunctionCall[],
+          );
+
+          // Regenerate the query with the tool results
+          return (
+            await generativeModel
+              .startChat({
+                generationConfig: this.generationConfig,
+                safetySettings: this.safetySettings,
+                history: conversationHistory,
+              })
+              .sendMessage(`${query}\n\n${functionCallResults.join('\n\n')}`)
+          ).response.text();
+        }
+
+        return (
+          await generativeModel
+            .startChat({
+              generationConfig: this.generationConfig,
+              safetySettings: this.safetySettings,
+              history: conversationHistory,
+            })
+            .sendMessage(query)
+        ).response.text();
+      }
+
+      const chat = generativeModel.startChat({
         generationConfig: this.generationConfig,
         safetySettings: this.safetySettings,
         history: conversationHistory,
+        tools: this.tools,
       });
 
       let responseText = '';
       const result = await chat.sendMessageStream(query);
       for await (const item of result.stream) {
-        const partText = item.text();
-        sendStreamResponse(partText);
-        responseText += partText;
+        if (item.functionCalls()) {
+          const functionCallResults = await this.handleFunctionCalls(
+            item.functionCalls() as FunctionCall[],
+            updateStatus,
+          );
+
+          // Regenerate the query with the tool results
+          const newResult = await chat.sendMessageStream(
+            `${query}\n\n${functionCallResults.join('\n\n')}`,
+          );
+
+          if (updateStatus) {
+            updateStatus('');
+          }
+
+          for await (const newItem of newResult.stream) {
+            const partText = newItem.text();
+            sendStreamResponse(partText);
+            responseText += partText;
+          }
+        } else {
+          const partText = item.text();
+          sendStreamResponse(partText);
+          responseText += partText;
+        }
       }
 
       return responseText;
@@ -260,14 +354,14 @@ export class GeminiService extends AbstractLanguageModelService {
     }
   }
 
-  public async getResponseForQueryWithImage(
+  private async getResponseChunksWithImagePayload(
+    generativeModel: GenerativeModel,
     query: string,
     images: string[],
+    _conversationHistory: Content[],
+    sendStreamResponse?: (message: string) => void,
+    updateStatus?: (status: string) => void,
   ): Promise<string> {
-    const genAI = new GoogleGenerativeAI(this.apiKey);
-
-    const model = genAI.getGenerativeModel({ model: this.currentModel });
-
     try {
       const imageParts = images.map((image) => {
         return this.fileToGenerativePart(
@@ -276,48 +370,56 @@ export class GeminiService extends AbstractLanguageModelService {
         );
       });
 
-      const result = await model.generateContent({
-        generationConfig: this.generationConfig,
-        contents: [{ role: 'user', parts: [{ text: query }, ...imageParts] }],
-      });
+      if (!sendStreamResponse) {
+        const result = await generativeModel.generateContent({
+          generationConfig: this.generationConfig,
+          contents: [{ role: 'user', parts: [{ text: query }, ...imageParts] }],
+        });
 
-      return result.response.text();
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        'Failed to get response from Gemini Service: ' + error,
-      );
-      return 'Failed to connect to the language model service.';
-    }
-  }
+        return result.response.text();
+      }
 
-  public async getResponseChunksForQueryWithImage(
-    query: string,
-    images: string[],
-    sendStreamResponse: (msg: string) => void,
-  ): Promise<string> {
-    const genAI = new GoogleGenerativeAI(this.apiKey);
-
-    const model = genAI.getGenerativeModel({ model: this.currentModel });
-
-    try {
       let responseText = '';
-
-      const imageParts = images.map((image) => {
-        return this.fileToGenerativePart(
-          image,
-          `image/${image.split('.').pop()}`,
-        );
-      });
-
-      const result = await model.generateContentStream({
+      const result = await generativeModel.generateContentStream({
         generationConfig: this.generationConfig,
         contents: [{ role: 'user', parts: [{ text: query }, ...imageParts] }],
       });
 
       for await (const item of result.stream) {
-        const partText = item.text();
-        sendStreamResponse(partText);
-        responseText += partText;
+        if (item.functionCalls()) {
+          const functionCallResults = await this.handleFunctionCalls(
+            item.functionCalls() as FunctionCall[],
+            updateStatus,
+          );
+
+          // Regenerate the query with the tool results
+          const newResult = await generativeModel.generateContentStream({
+            generationConfig: this.generationConfig,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: `${query}\n\n${functionCallResults.join('\n\n')}` },
+                  ...imageParts,
+                ],
+              },
+            ],
+          });
+
+          if (updateStatus) {
+            updateStatus('');
+          }
+
+          for await (const newItem of newResult.stream) {
+            const partText = newItem.text();
+            sendStreamResponse(partText);
+            responseText += partText;
+          }
+        } else {
+          const partText = item.text();
+          sendStreamResponse(partText);
+          responseText += partText;
+        }
       }
 
       return responseText;
@@ -327,5 +429,46 @@ export class GeminiService extends AbstractLanguageModelService {
       );
       return 'Failed to connect to the language model service.';
     }
+  }
+
+  public async getResponse(options: GetResponseOptions): Promise<string> {
+    if (this.currentModel === '') {
+      vscode.window.showErrorMessage(
+        'Make sure the model is selected before sending a message. Open the model selection dropdown and configure the model.',
+      );
+      return 'Missing model configuration. Check the model selection dropdown.';
+    }
+
+    const { query, images, currentEntryID, sendStreamResponse, updateStatus } =
+      options;
+
+    const generativeModel = new GoogleGenerativeAI(
+      this.apiKey,
+    ).getGenerativeModel({
+      model: this.currentModel,
+    });
+
+    const conversationHistory = this.conversationHistoryToContent(
+      this.getHistoryBeforeEntry(currentEntryID).entries,
+    );
+
+    if (images && images.length > 0) {
+      return this.getResponseChunksWithImagePayload(
+        generativeModel,
+        query,
+        images,
+        conversationHistory,
+        sendStreamResponse,
+        updateStatus,
+      );
+    }
+
+    return this.getResponseChunksWithTextPayload(
+      generativeModel,
+      query,
+      conversationHistory,
+      sendStreamResponse,
+      updateStatus,
+    );
   }
 }

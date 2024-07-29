@@ -1,14 +1,21 @@
 import * as vscode from 'vscode';
-import type { ChatCompletionInputMessage } from '@huggingface/tasks/src/tasks/chat-completion/inference';
+import type {
+  ChatCompletionInput,
+  ChatCompletionInputMessage,
+} from '@huggingface/tasks/src/tasks/chat-completion/inference';
 import { HfInference } from '@huggingface/inference';
 
-import type { ConversationEntry } from '../../types';
+import type { ConversationEntry, GetResponseOptions } from '../../types';
 import { AbstractLanguageModelService } from './abstractLanguageModelService';
-import SettingsManager from '../../api/settingsManager';
+import { SettingsManager } from '../../api';
 
 export class HuggingFaceService extends AbstractLanguageModelService {
   private apiKey: string;
   private readonly settingsListener: vscode.Disposable;
+
+  private readonly generationConfig: Partial<ChatCompletionInput> = {
+    max_tokens: 8192,
+  };
 
   constructor(
     context: vscode.ExtensionContext,
@@ -16,10 +23,12 @@ export class HuggingFaceService extends AbstractLanguageModelService {
   ) {
     const availableModelNames = settingsManager.get(
       'huggingFaceAvailableModels',
-    ) || ['HuggingFaceH4/zephyr-7b-beta'];
-    const defaultModelName = availableModelNames[0];
+    );
+    const defaultModelName =
+      settingsManager.get('lastSelectedModel').huggingFace;
 
     super(
+      'huggingFace',
       context,
       'huggingFaceConversationHistory.json',
       settingsManager,
@@ -38,14 +47,8 @@ export class HuggingFaceService extends AbstractLanguageModelService {
 
     // Listen for settings changes
     this.settingsListener = vscode.workspace.onDidChangeConfiguration((e) => {
-      if (
-        e.affectsConfiguration('repo-code-assistant.huggingFaceApiKey') ||
-        e.affectsConfiguration('repo-code-assistant.huggingFaceAvailableModels')
-      ) {
+      if (e.affectsConfiguration('repo-code-assistant.huggingFaceApiKey')) {
         this.apiKey = settingsManager.get('huggingFaceApiKey');
-        this.availableModelNames = settingsManager.get(
-          'huggingFaceAvailableModels',
-        ) || ['HuggingFaceH4/zephyr-7b-beta'];
       }
     });
 
@@ -93,56 +96,58 @@ export class HuggingFaceService extends AbstractLanguageModelService {
     return result;
   }
 
-  public async getResponseForQuery(
-    query: string,
-    currentEntryID?: string,
-  ): Promise<string> {
-    const huggerFace = new HfInference(this.apiKey);
-
-    const history = currentEntryID
-      ? this.getHistoryBeforeEntry(currentEntryID)
-      : this.history;
-    const conversationHistory = this.conversationHistoryToContent(
-      history.entries,
-      query,
-    );
-
-    const response = await huggerFace.chatCompletion({
-      model: this.currentModel,
-      messages: conversationHistory,
-      max_tokens: 8192,
-    });
-
-    return response.choices[0].message.content ?? '';
-  }
-
-  public async getResponseChunksForQuery(
-    query: string,
-    sendStreamResponse: (msg: string) => void,
-    currentEntryID?: string,
-  ): Promise<string> {
-    const huggerFace = new HfInference(this.apiKey);
-
-    const history = currentEntryID
-      ? this.getHistoryBeforeEntry(currentEntryID)
-      : this.history;
-    const conversationHistory = this.conversationHistoryToContent(
-      history.entries,
-      query,
-    );
-
-    let responseText = '';
-
-    for await (const chunk of huggerFace.chatCompletionStream({
-      model: this.currentModel,
-      messages: conversationHistory,
-      max_tokens: 8192,
-    })) {
-      const responseChunk = chunk.choices[0].delta.content ?? '';
-      sendStreamResponse(responseChunk);
-      responseText += responseChunk;
+  public async getResponse(options: GetResponseOptions): Promise<string> {
+    if (this.currentModel === '') {
+      vscode.window.showErrorMessage(
+        'Make sure the model is selected before sending a message. Open the model selection dropdown and configure the model.',
+      );
+      return 'Missing model configuration. Check the model selection dropdown.';
     }
 
-    return responseText;
+    const { query, images, sendStreamResponse, currentEntryID } = options;
+
+    if (images && images.length > 0) {
+      vscode.window.showWarningMessage(
+        'The images inference is not supported currently. The images will be ignored.',
+      );
+    }
+
+    const huggerFace = new HfInference(this.apiKey);
+
+    const conversationHistory = this.conversationHistoryToContent(
+      this.getHistoryBeforeEntry(currentEntryID).entries,
+      query,
+    );
+
+    try {
+      if (!sendStreamResponse) {
+        return (
+          await huggerFace.chatCompletion({
+            model: this.currentModel,
+            messages: conversationHistory,
+            ...this.generationConfig,
+          })
+        ).choices[0].message.content!;
+      }
+
+      let responseText = '';
+
+      for await (const chunk of huggerFace.chatCompletionStream({
+        model: this.currentModel,
+        messages: conversationHistory,
+        ...this.generationConfig,
+      })) {
+        const responseChunk = chunk.choices[0].delta.content ?? '';
+        sendStreamResponse(responseChunk);
+        responseText += responseChunk;
+      }
+
+      return responseText;
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        'Failed to get response from Hugging Face Service: ' + error,
+      );
+      return 'Failed to connect to the language model service.';
+    }
   }
 }

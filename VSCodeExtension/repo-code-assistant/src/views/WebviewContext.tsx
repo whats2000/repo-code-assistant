@@ -1,6 +1,6 @@
 import React, { createContext } from 'react';
 import DeferredPromise from 'promise-deferred';
-import { v4 as uuid } from 'uuid';
+import { v4 as uuidV4 } from 'uuid';
 
 import type {
   ViewApi,
@@ -66,10 +66,10 @@ export const webviewContextValue = (
   const onMessage = (e: MessageEvent<Record<string, unknown>>) => {
     if (e.data.type === 'response') {
       const data = e.data as ViewApiResponse;
-      pendingRequests[data.id].resolve(data.value);
+      pendingRequests[data.id]?.resolve(data.value);
     } else if (e.data.type === 'error') {
       const data = e.data as ViewApiError;
-      pendingRequests[data.id].reject(new Error(data.value));
+      pendingRequests[data.id]?.reject(new Error(data.value));
     } else if (e.data.type === 'event') {
       const data = e.data as ViewApiEvent;
       listeners?.[data.key]?.forEach((cb) => cb(...data.value));
@@ -89,7 +89,7 @@ export const webviewContextValue = (
     key: K,
     ...params: Parameters<ViewApi[K]>
   ) => {
-    const id = uuid();
+    const id = uuidV4();
     const deferred = new DeferredPromise<ReturnType<ViewApi[K]>>();
     const req: ViewApiRequest = { type: 'request', id, key, params };
     pendingRequests[id] = deferred;

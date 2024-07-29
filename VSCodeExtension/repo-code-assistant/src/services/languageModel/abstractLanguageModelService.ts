@@ -1,16 +1,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidV4 } from 'uuid';
 
 import * as vscode from 'vscode';
 
-import type {
+import {
   ConversationHistory,
   ConversationEntry,
   ConversationHistoryList,
   LanguageModelService,
+  GetResponseOptions,
+  ModelServiceType,
 } from '../../types';
-import SettingsManager from '../../api/settingsManager';
+import { SettingsManager } from '../../api';
 
 /**
  * Abstract class for the Language Model Service
@@ -18,6 +20,12 @@ import SettingsManager from '../../api/settingsManager';
 export abstract class AbstractLanguageModelService
   implements LanguageModelService
 {
+  /**
+   * The type of the service
+   * @protected
+   */
+  protected serviceType: ModelServiceType;
+
   /**
    * The extension context
    * @protected
@@ -40,15 +48,7 @@ export abstract class AbstractLanguageModelService
    * The current conversation history
    * @protected
    */
-  protected history: ConversationHistory = {
-    title: '',
-    root: '',
-    top: [],
-    current: '',
-    create_time: Date.now(),
-    update_time: Date.now(),
-    entries: {},
-  };
+  protected history: ConversationHistory = this.getDefaultConversationHistory();
 
   /**
    * The list of conversation histories
@@ -69,6 +69,7 @@ export abstract class AbstractLanguageModelService
 
   /**
    * Constructor for the AbstractLanguageModelService
+   * @param serviceType - The type of the service
    * @param context - The extension context
    * @param historyFileName - The name of the history file
    * @param settingsManager - The settings manager
@@ -77,12 +78,14 @@ export abstract class AbstractLanguageModelService
    * @protected
    */
   protected constructor(
+    serviceType: ModelServiceType,
     context: vscode.ExtensionContext,
     historyFileName: string,
     settingsManager: SettingsManager,
     currentModel: string,
     availableModelNames: string[],
   ) {
+    this.serviceType = serviceType;
     this.context = context;
     this.settingsManager = settingsManager;
     this.currentModel = currentModel;
@@ -107,6 +110,49 @@ export abstract class AbstractLanguageModelService
   }
 
   /**
+   * Get the history before a given entry id
+   * @param currentEntryID - The entry id to get the history before
+   * @returns The conversation history before the given entry id
+   */
+  protected getHistoryBeforeEntry(
+    currentEntryID?: string,
+  ): ConversationHistory {
+    if (!currentEntryID) return this.history;
+
+    const newHistory: ConversationHistory = {
+      title: this.history.title,
+      root: this.history.root,
+      top: this.history.top,
+      current: currentEntryID,
+      create_time: this.history.create_time,
+      update_time: Date.now(),
+      entries: {},
+    };
+
+    const entryStack = [];
+    let currentEntry = this.history.entries[currentEntryID];
+
+    while (currentEntry) {
+      entryStack.push(currentEntry);
+      if (currentEntry.parent) {
+        currentEntry = this.history.entries[currentEntry.parent];
+      } else {
+        break;
+      }
+    }
+
+    entryStack.reverse().forEach((entry) => {
+      newHistory.entries[entry.id] = entry;
+    });
+
+    return newHistory;
+  }
+
+  public updateAvailableModels(newAvailableModels: string[]): void {
+    this.availableModelNames = newAvailableModels;
+  }
+
+  /**
    * Get the latest version of the language model service
    */
   public async getLatestAvailableModelNames(): Promise<string[]> {
@@ -117,6 +163,21 @@ export abstract class AbstractLanguageModelService
       .then();
 
     return this.availableModelNames;
+  }
+
+  /**
+   * Get the default empty conversation history
+   */
+  public getDefaultConversationHistory(): ConversationHistory {
+    return {
+      title: '',
+      root: '',
+      top: [],
+      current: '',
+      create_time: Date.now(),
+      update_time: Date.now(),
+      entries: {},
+    };
   }
 
   /**
@@ -135,7 +196,7 @@ export abstract class AbstractLanguageModelService
       this.histories = histories;
       if (Object.keys(histories).length > 0) {
         for (const historyID in histories) {
-          if (!histories[historyID].top) {
+          if (!histories[historyID].top && histories[historyID].root !== '') {
             histories[historyID].top = [histories[historyID].root];
           }
         }
@@ -173,15 +234,8 @@ export abstract class AbstractLanguageModelService
    * Add a new conversation history
    */
   public addNewConversationHistory(): ConversationHistory {
-    const newHistory: ConversationHistory = {
-      title: '',
-      root: '',
-      top: [],
-      current: '',
-      create_time: Date.now(),
-      update_time: Date.now(),
-      entries: {},
-    };
+    const newHistory: ConversationHistory =
+      this.getDefaultConversationHistory();
 
     this.histories[newHistory.root] = newHistory;
     this.history = newHistory;
@@ -209,7 +263,7 @@ export abstract class AbstractLanguageModelService
     message: string,
     images?: string[],
   ): string {
-    const newID = uuidv4();
+    const newID = uuidV4();
     const newEntry: ConversationEntry = {
       id: newID,
       role: role,
@@ -292,41 +346,6 @@ export abstract class AbstractLanguageModelService
   }
 
   /**
-   * Get the history before a given entry id
-   * @param currentEntryID - The entry id to get the history before
-   * @returns The conversation history before the given entry id
-   */
-  protected getHistoryBeforeEntry(currentEntryID: string): ConversationHistory {
-    const newHistory: ConversationHistory = {
-      title: this.history.title,
-      root: this.history.root,
-      top: this.history.top,
-      current: currentEntryID,
-      create_time: this.history.create_time,
-      update_time: Date.now(),
-      entries: {},
-    };
-
-    let currentEntry = this.history.entries[currentEntryID];
-    const entryStack: ConversationEntry[] = [];
-
-    while (currentEntry) {
-      entryStack.push(currentEntry);
-      if (currentEntry.parent) {
-        currentEntry = this.history.entries[currentEntry.parent];
-      } else {
-        break;
-      }
-    }
-
-    entryStack.reverse().forEach((entry) => {
-      newHistory.entries[entry.id] = entry;
-    });
-
-    return newHistory;
-  }
-
-  /**
    * Switch to a different conversation history
    * @param historyID - The ID of the history to switch to
    */
@@ -364,7 +383,7 @@ export abstract class AbstractLanguageModelService
             try {
               await fs.promises.unlink(imagePath);
             } catch (error) {
-              vscode.window.showErrorMessage(
+              console.error(
                 `Failed to delete image: ${imagePath}, error: ${error}`,
               );
             }
@@ -385,22 +404,36 @@ export abstract class AbstractLanguageModelService
   }
 
   /**
-   * Get the available models
-   */
-  public getAvailableModels(): string[] {
-    return this.availableModelNames;
-  }
-
-  /**
    * Switch to a different model
    * @param newModel - The name of the model to switch to
    */
   public switchModel(newModel: string): void {
+    const lastSelectedModel = this.settingsManager.get('lastSelectedModel');
+    if (this.availableModelNames.length === 0) {
+      this.currentModel = '';
+      lastSelectedModel[this.serviceType] = '';
+      this.settingsManager
+        .set('lastSelectedModel', lastSelectedModel)
+        .then(() => {
+          vscode.window
+            .showErrorMessage(
+              'No available models to switch to. Please configure the models first.',
+            )
+            .then();
+        });
+      return;
+    }
+
     if (this.availableModelNames.includes(newModel)) {
       this.currentModel = newModel;
-      vscode.window
-        .showInformationMessage(`Switched to model: ${newModel}`)
-        .then();
+      lastSelectedModel[this.serviceType] = newModel;
+      this.settingsManager
+        .set('lastSelectedModel', lastSelectedModel)
+        .then(() => {
+          vscode.window
+            .showInformationMessage(`Switched to model: ${newModel}`)
+            .then();
+        });
     } else {
       vscode.window
         .showErrorMessage(`Model ${newModel} is not available.`)
@@ -409,69 +442,22 @@ export abstract class AbstractLanguageModelService
   }
 
   /**
-   * Get the response for a query, if the currentEntryID is provided, the history will be used from that point
-   * @param query - The query to get a response for
-   * @param currentEntryID - The current entry ID
-   * @returns The response for the query
+   * Stop current response
    */
-  public abstract getResponseForQuery(
-    query: string,
-    currentEntryID?: string,
-  ): Promise<string>;
-
-  /**
-   * Get the response for a query and also fire a view event to send the response in chunks.
-   * If the currentEntryID is provided, the history will be used from that point
-   * @param query - The query to get a response for
-   * @param sendStreamResponse - The callback to send chunks of the response to
-   * @param currentEntryID - The current entry ID
-   * @returns The response for the query
-   */
-  public abstract getResponseChunksForQuery(
-    query: string,
-    sendStreamResponse: (msg: string) => void,
-    currentEntryID?: string,
-  ): Promise<string>;
-
-  /**
-   * Get the response for a query with an image, if the currentEntryID is provided, the history will be used from that point
-   * If the model does not support this feature, a message will be shown to the user
-   * @param _query - The query to get a response for
-   * @param _images - The list of images paths to use
-   * @param _currentEntryID - The current entry ID
-   */
-  public async getResponseForQueryWithImage(
-    _query: string,
-    _images: string[],
-    _currentEntryID?: string,
-  ): Promise<string> {
+  public async stopResponse(): Promise<void> {
     vscode.window
       .showInformationMessage(
         'This feature is not supported by the current model.',
       )
       .then();
-
-    return 'This feature is not supported by the current model.';
   }
 
   /**
-   * Get the response for a query with an image, if the currentEntryID is provided, the history will be used from that point
-   * If the model does not support this feature, a message will be shown to the user
-   * @param _query - The query to get a response for
-   * @param _images - The list of images paths to use
-   * @param _sendStreamResponse - The callback to send chunks of the response to
+   * Get the response for a query with an image and also fire a view event to send the response in chunks.
+   * If the currentEntryID is provided
+   * @param options - The options to get a response for
+   * @returns The response for the query
+   * @see GetResponseOptions
    */
-  public async getResponseChunksForQueryWithImage(
-    _query: string,
-    _images: string[],
-    _sendStreamResponse: (msg: string) => void,
-  ): Promise<string> {
-    vscode.window
-      .showInformationMessage(
-        'This feature is not supported by the current model.',
-      )
-      .then();
-
-    return 'This feature is not supported by the current model.';
-  }
+  public abstract getResponse(options: GetResponseOptions): Promise<string>;
 }

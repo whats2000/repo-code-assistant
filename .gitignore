@@ -28,5 +28,6 @@ dist-ssr
 .vite-react-ssg-temp/
 MonitorProject/
 
-LocalLanguageModelServer/venv/*
+ExternalPlugIn/LocalLanguageModelServer/venv/*
 uploads/*
+coverage/

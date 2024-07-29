@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState } from 'react';
 import SyntaxHighlighter from 'react-syntax-highlighter';
 import * as hljs from 'react-syntax-highlighter/dist/cjs/styles/hljs';
-import { BgColorsOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { Button, Flex, Select } from 'antd';
+import { BgColorsOutlined } from '@ant-design/icons';
 import styled from 'styled-components';
 
 import { CopyButton } from './CopyButton';
-import { Button, Flex, Select } from 'antd';
 
 const CodeContainer = styled.div<{ $dynamicStyle: React.CSSProperties }>`
   border-radius: 4px !important;
@@ -20,15 +20,6 @@ const CodeInfoContainer = styled(Flex)<{ $dynamicStyle: React.CSSProperties }>`
 `;
 
 const StyledSettingButton = styled(Button)`
-  background-color: transparent;
-  border: none;
-  border-radius: 4px;
-  padding: 5px 8px;
-  cursor: pointer;
-  outline: none;
-`;
-
-const InsertButton = styled(Button)`
   background-color: transparent;
   border: none;
   border-radius: 4px;
@@ -142,7 +133,6 @@ export const RendererCode: { [nodeType: string]: React.ElementType } = {
               />
             )}
             <CopyButton copied={copied} handleCopy={handleCopy} />
-            <InsertButton icon={<MenuUnfoldOutlined />} content='Insert' />
           </Flex>
         </CodeInfoContainer>
         <CodeBlock

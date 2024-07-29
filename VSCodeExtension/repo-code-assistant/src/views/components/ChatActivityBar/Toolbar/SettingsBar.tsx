@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useContext } from 'react';
 import styled from 'styled-components';
+import type { Color } from 'antd/es/color-picker/color';
 import {
   Drawer,
   Form,
   Input,
-  Checkbox,
   Select,
   ColorPicker,
   Button,
@@ -12,9 +12,8 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import type { Color } from 'antd/es/color-picker/color';
 
-import type { ExtensionSettings, ModelServiceType } from '../../../../types';
+import type { ExtensionSettings } from '../../../../types';
 import { WebviewContext } from '../../../WebviewContext';
 import { MODEL_SERVICE_LINKS } from '../../../../constants';
 
@@ -27,27 +26,30 @@ const FormGroup = styled(Form.Item)`
   margin-bottom: 15px;
 `;
 
-const CheckboxGroup = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-`;
-
 type SettingSidebarProps = {
   isOpen: boolean;
   onClose: () => void;
+  setTheme: (newTheme: {
+    primaryColor?: string | undefined;
+    algorithm?:
+      | 'defaultAlgorithm'
+      | 'darkAlgorithm'
+      | 'compactAlgorithm'
+      | undefined;
+    borderRadius?: number | undefined;
+  }) => Promise<void>;
 };
 
 export const SettingsBar: React.FC<SettingSidebarProps> = ({
   isOpen,
   onClose,
+  setTheme,
 }) => {
   const { callApi } = useContext(WebviewContext);
   const [partialSettings, setPartialSettings] = useState<
-    Partial<ExtensionSettings> & {
-      enableModel: { [key in ModelServiceType]: boolean };
-    }
+    Partial<ExtensionSettings>
   >({
+    anthropicApiKey: '',
     groqApiKey: '',
     geminiApiKey: '',
     openaiApiKey: '',
@@ -55,15 +57,6 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
     huggingFaceApiKey: '',
     ollamaClientHost: '',
     gptSoVitsClientHost: '',
-    enableModel: {
-      gemini: false,
-      openai: false,
-      cohere: false,
-      groq: false,
-      huggingFace: false,
-      ollama: false,
-      custom: false,
-    },
     themePrimaryColor: '#1677ff',
     themeAlgorithm: 'defaultAlgorithm',
     themeBorderRadius: 4,
@@ -71,57 +64,29 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (isOpen) {
-      setIsLoading(true);
-
-      // Create an array of promises for the API calls
-      const promises = Object.keys(partialSettings).map(async (key) => {
-        try {
-          let value = await callApi(
-            'getSetting',
-            key as keyof typeof partialSettings,
-          );
-          if (key === 'enableModel' && Object.keys(value).length === 0) {
-            value = partialSettings.enableModel;
-          }
-          setPartialSettings((prev) => ({ ...prev, [key]: value }));
-        } catch (e) {
-          console.error(`Failed to fetch setting ${key}:`, e);
-        }
-      });
-
-      // Use Promise.all to wait for all API calls to complete
-      Promise.all(promises).finally(() => {
-        setIsLoading(false);
-      });
+    if (!isOpen) {
+      return;
     }
+    setIsLoading(true);
+    const promises = Object.keys(partialSettings).map(async (key) => {
+      try {
+        const value = await callApi(
+          'getSetting',
+          key as keyof typeof partialSettings,
+        );
+        setPartialSettings((prev) => ({ ...prev, [key]: value }));
+      } catch (e) {
+        console.error(`Failed to fetch setting ${key}:`, e);
+      }
+    });
+    Promise.all(promises).finally(() => {
+      setIsLoading(false);
+    });
   }, [isOpen]);
 
   const handleSettingChange =
-    (
-      key:
-        | keyof Partial<ExtensionSettings>
-        | keyof typeof partialSettings.enableModel,
-    ) =>
-    (event: any) => {
-      if (key in partialSettings.enableModel) {
-        setPartialSettings((prev) => ({
-          ...prev,
-          enableModel: {
-            ...prev.enableModel,
-            [key]: event.target.checked,
-          },
-        }));
-        saveSettings({
-          ...partialSettings,
-          enableModel: {
-            ...partialSettings.enableModel,
-            [key]: event.target.checked,
-          },
-        });
-      } else {
-        setPartialSettings((prev) => ({ ...prev, [key]: event.target.value }));
-      }
+    (key: keyof Partial<ExtensionSettings>) => (event: any) => {
+      setPartialSettings((prev) => ({ ...prev, [key]: event.target.value }));
     };
 
   const handleBlurSave = () => {
@@ -133,9 +98,11 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
       ...prev,
       themePrimaryColor: color.toHexString(),
     }));
-    saveSettings({
-      ...partialSettings,
-      themePrimaryColor: color.toHexString(),
+    setTheme({ primaryColor: color.toHexString() }).then(() => {
+      saveSettings({
+        ...partialSettings,
+        themePrimaryColor: color.toHexString(),
+      });
     });
   };
 
@@ -143,7 +110,9 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
     value: 'darkAlgorithm' | 'defaultAlgorithm' | 'compactAlgorithm',
   ) => {
     setPartialSettings((prev) => ({ ...prev, themeAlgorithm: value }));
-    saveSettings({ ...partialSettings, themeAlgorithm: value });
+    setTheme({ algorithm: value }).then(() => {
+      saveSettings({ ...partialSettings, themeAlgorithm: value });
+    });
   };
 
   const handleBorderRadiusChange = (
@@ -151,7 +120,9 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
   ) => {
     const value = parseInt(event.target.value);
     setPartialSettings((prev) => ({ ...prev, themeBorderRadius: value }));
-    saveSettings({ ...partialSettings, themeBorderRadius: value });
+    setTheme({ borderRadius: value }).then(() => {
+      saveSettings({ ...partialSettings, themeBorderRadius: value });
+    });
   };
 
   const resetTheme = () => {
@@ -169,11 +140,7 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
     });
   };
 
-  const saveSettings = (
-    updatedSettings: Partial<ExtensionSettings> & {
-      enableModel: { [key in ModelServiceType]: boolean };
-    },
-  ) => {
+  const saveSettings = (updatedSettings: Partial<ExtensionSettings>) => {
     Object.entries(updatedSettings).map(([key, value]) =>
       callApi('setSetting', key as keyof ExtensionSettings, value).catch((e) =>
         callApi(
@@ -210,33 +177,7 @@ export const SettingsBar: React.FC<SettingSidebarProps> = ({
         onFinish={() => saveSettings(partialSettings)}
       >
         {Object.entries(partialSettings).map(([key, value]) => {
-          if (key === 'enableModel') {
-            return (
-              <FormGroup
-                key={key}
-                label={
-                  key.charAt(0).toUpperCase() +
-                  key.slice(1).replace(/([A-Z])/g, ' $1')
-                }
-              >
-                <CheckboxGroup>
-                  {Object.entries(value).map(([modelKey, modelValue]) => (
-                    <Checkbox
-                      key={modelKey}
-                      checked={modelValue}
-                      onChange={(event) => {
-                        handleSettingChange(
-                          modelKey as keyof typeof partialSettings.enableModel,
-                        )(event);
-                      }}
-                    >
-                      {modelKey.charAt(0).toUpperCase() + modelKey.slice(1)}
-                    </Checkbox>
-                  ))}
-                </CheckboxGroup>
-              </FormGroup>
-            );
-          } else if (key.includes('ApiKey') || key.includes('ClientHost')) {
+          if (key.includes('ApiKey') || key.includes('ClientHost')) {
             return (
               <FormGroup
                 key={key}

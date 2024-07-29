@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
-import { Select, Button, Space, Dropdown, Drawer, MenuProps } from 'antd';
+import { Flex, MenuProps, SelectProps } from 'antd';
+import { Select, Button, Space, Dropdown, Drawer } from 'antd';
 import {
   PlusOutlined,
   HistoryOutlined,
@@ -13,8 +14,6 @@ import { EditModelListBar } from './Toolbar/EditModelListBar';
 import { HistorySidebar } from './Toolbar/HistorySidebar';
 import { SettingsBar } from './Toolbar/SettingsBar';
 import { VoiceSettingsBar } from './Toolbar/VoiceSettingsBar';
-
-const { Option } = Select;
 
 const StyledSpace = styled(Space)`
   display: flex;
@@ -38,6 +37,15 @@ type ToolbarProps = {
   setConversationHistory: React.Dispatch<
     React.SetStateAction<ConversationHistory>
   >;
+  setTheme: (newTheme: {
+    primaryColor?: string | undefined;
+    algorithm?:
+      | 'defaultAlgorithm'
+      | 'darkAlgorithm'
+      | 'compactAlgorithm'
+      | undefined;
+    borderRadius?: number | undefined;
+  }) => Promise<void>;
 };
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -47,9 +55,11 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   isActiveModelLoading,
   setIsActiveModelLoading,
   setConversationHistory,
+  setTheme,
 }) => {
   const { callApi } = useContext(WebviewContext);
   const modelServices: ModelServiceType[] = [
+    'anthropic',
     'gemini',
     'cohere',
     'openai',
@@ -76,7 +86,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     callApi('getAvailableModels', activeModelService)
       .then((models: string[]) => {
         setAvailableModels(models);
-        setSelectedModel(models[0]);
         setIsActiveModelLoading(false);
       })
       .catch((error) => {
@@ -88,8 +97,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         setIsActiveModelLoading(false);
       });
 
+    callApi('getCurrentModel', activeModelService)
+      .then((model: string) => setSelectedModel(model))
+      .catch((error) =>
+        callApi(
+          'alertMessage',
+          `Failed to load current model: ${error}`,
+          'error',
+        ).catch(console.error),
+      );
+
     const handleResize = () => {
-      setIsOffCanvas(window.innerWidth < 600);
+      setIsOffCanvas(window.innerWidth < 560);
     };
 
     window.addEventListener('resize', handleResize);
@@ -157,6 +176,13 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
     if (newAvailableModels.length === 0) {
       setSelectedModel('');
+      callApi('switchModel', activeModelService, '').catch((error) =>
+        callApi(
+          'alertMessage',
+          `Failed to switch model: ${error}`,
+          'error',
+        ).catch(console.error),
+      );
       return;
     }
 
@@ -186,6 +212,37 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     },
   ];
 
+  const modelServiceOptions: SelectProps['options'] = modelServices.map(
+    (service) => ({
+      key: service,
+      label: service,
+      value: service,
+    }),
+  );
+
+  const modelOptions: SelectProps['options'] = [
+    ...availableModels.map((model, index) => ({
+      key: `available-${index}`,
+      label: model,
+      value: model,
+    })),
+    {
+      key: 'edit',
+      label: (
+        <EditModelListButton
+          icon={<SettingOutlined />}
+          onClick={openEditModelList}
+          style={{ width: '100%' }}
+        >
+          Edit Model List
+        </EditModelListButton>
+      ),
+      value: 'edit',
+      disabled: true,
+      style: { paddingLeft: 0, paddingRight: 0 },
+    },
+  ];
+
   return (
     <>
       <StyledSpace>
@@ -198,17 +255,31 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 onChange={handleModelServiceChange}
                 style={{ width: 100 }}
                 loading={isActiveModelLoading}
-                options={modelServices.map((service) => ({
-                  key: service,
-                  label: service,
-                  value: service,
-                }))}
+                options={modelServiceOptions}
               />
-              <Button onClick={() => setIsSelectModelOpen(true)}>
-                {selectedModel}
+              <Button
+                onClick={() => setIsSelectModelOpen(true)}
+                loading={isActiveModelLoading}
+                style={{ whiteSpace: 'nowrap', overflow: 'hidden' }}
+              >
+                {isActiveModelLoading ? 'Loading...' : selectedModel}
               </Button>
               <Drawer
-                title='Select Model'
+                title={
+                  <Flex justify={'space-between'} align={'center'}>
+                    <span>Select Model</span>
+                    <Space>
+                      <Button
+                        icon={<HistoryOutlined />}
+                        onClick={toggleHistorySidebar}
+                      />
+                      <Button icon={<PlusOutlined />} onClick={createNewChat} />
+                      <Dropdown menu={{ items: settingMenuItems }}>
+                        <Button icon={<SettingOutlined />} />
+                      </Dropdown>
+                    </Space>
+                  </Flex>
+                }
                 placement='right'
                 open={isSelectModelOpen}
                 onClose={() => setIsSelectModelOpen(false)}
@@ -218,26 +289,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   value={isActiveModelLoading ? 'Loading...' : selectedModel}
                   onChange={handleModelChange}
                   style={{ width: '100%' }}
-                >
-                  {availableModels.map((model, index) => (
-                    <Option key={`available-${index}`} value={model}>
-                      {model}
-                    </Option>
-                  ))}
-                  <Option
-                    value='edit'
-                    style={{ paddingLeft: 0, paddingRight: 0 }}
-                    disabled
-                  >
-                    <EditModelListButton
-                      icon={<SettingOutlined />}
-                      onClick={openEditModelList}
-                      style={{ width: '100%' }}
-                    >
-                      Edit Model List
-                    </EditModelListButton>
-                  </Option>
-                </Select>
+                  options={modelOptions}
+                />
               </Drawer>
             </>
           ) : (
@@ -248,11 +301,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 onChange={handleModelServiceChange}
                 style={{ width: 150 }}
                 loading={isActiveModelLoading}
-                options={modelServices.map((service) => ({
-                  key: service,
-                  label: service,
-                  value: service,
-                }))}
+                options={modelServiceOptions}
               />
               <Select
                 showSearch
@@ -260,28 +309,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 onChange={handleModelChange}
                 style={{ width: 200 }}
                 loading={isActiveModelLoading}
-                options={[
-                  ...availableModels.map((model, index) => ({
-                    key: `available-${index}`,
-                    label: model,
-                    value: model,
-                  })),
-                  {
-                    key: 'edit',
-                    label: (
-                      <EditModelListButton
-                        icon={<SettingOutlined />}
-                        onClick={openEditModelList}
-                        style={{ width: '100%' }}
-                      >
-                        Edit Model List
-                      </EditModelListButton>
-                    ),
-                    value: 'edit',
-                    disabled: true,
-                    style: { paddingLeft: 0, paddingRight: 0 },
-                  },
-                ]}
+                options={modelOptions}
               />
             </>
           )}
@@ -304,6 +332,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <SettingsBar
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        setTheme={setTheme}
       />
       <VoiceSettingsBar
         isOpen={isVoiceSettingsOpen}

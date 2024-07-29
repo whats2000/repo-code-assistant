@@ -1,133 +1,174 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
 import type {
   ExtensionSettings,
-  CustomModelSettings,
-  GptSoVitsVoiceSetting,
+  ExtensionSettingsCrossDevice,
+  ExtensionSettingsLocal,
 } from '../types';
 
-class SettingsManager {
+export class SettingsManager {
   private static instance: SettingsManager;
+  private readonly localSettingsPath: string;
+  private readonly defaultLocalSettings: ExtensionSettingsLocal = {
+    anthropicAvailableModels: [
+      'claude-3-5-sonnet-20240620',
+      'claude-3-haiku-20240307',
+      'claude-3-opus-20240229',
+      'claude-3-sonnet-20240229',
+    ],
+    openaiAvailableModels: [
+      'gpt-3.5-turbo',
+      'gpt-4o',
+      'gpt-4-turbo',
+      'gpt-4',
+      'gpt-3.5-turbo-instruct',
+    ],
+    openaiAvailableVoices: [
+      'nova',
+      'alloy',
+      'echo',
+      'fable',
+      'onyx',
+      'shimmer',
+    ],
+    openaiSelectedVoice: 'nova',
+    geminiAvailableModels: ['gemini-1.5-pro-latest', 'gemini-1.5-flash-latest'],
+    cohereAvailableModels: ['command', 'command-r', 'command-r-plus'],
+    groqAvailableModels: [
+      'llama3-70b-8192',
+      'llama3-8b-8192',
+      'mixtral-8x7b-32768',
+      'gemma-7b-it',
+      'gemma2-9b-it',
+    ],
+    huggingFaceAvailableModels: ['HuggingFaceH4/zephyr-7b-beta'],
+    ollamaClientHost: 'http://127.0.0.1:11434',
+    ollamaAvailableModels: ['Auto Detect'],
+    lastUsedModel: 'gemini',
+    lastSelectedModel: {
+      gemini: 'gemini-1.5-pro-latest',
+      anthropic: 'claude-3-5-sonnet-20240620',
+      openai: 'gpt-3.5-turbo',
+      cohere: 'command',
+      groq: 'llama3-70b-8192',
+      huggingFace: 'HuggingFaceH4/zephyr-7b-beta',
+      ollama: 'Auto Detect',
+      custom: '',
+    },
+    customModels: [],
+    selectedVoiceToTextService: 'not set',
+    selectedTextToVoiceService: 'not set',
+    gptSoVitsClientHost: 'http://127.0.0.1:9880/',
+    gptSoVitsAvailableReferenceVoices: [],
+    gptSoVitsSelectedReferenceVoice: '',
+  };
+  private readonly defaultCrossDeviceSettings: ExtensionSettingsCrossDevice = {
+    anthropicApiKey: '',
+    openaiApiKey: '',
+    geminiApiKey: '',
+    cohereApiKey: '',
+    groqApiKey: '',
+    huggingFaceApiKey: '',
+    themePrimaryColor: '#f0f0f0',
+    themeAlgorithm: 'darkAlgorithm',
+    themeBorderRadius: 4,
+    hljsTheme: 'darcula',
+  };
+  private readonly defaultSettings: ExtensionSettings = {
+    ...this.defaultLocalSettings,
+    ...this.defaultCrossDeviceSettings,
+  };
+  private localSettings: ExtensionSettingsLocal = {
+    ...this.defaultLocalSettings,
+  };
 
-  public static getInstance(): SettingsManager {
-    if (!this.instance) {
-      this.instance = new SettingsManager();
-    }
-    return this.instance;
+  private constructor(context: vscode.ExtensionContext) {
+    this.localSettingsPath = path.join(
+      context.extensionPath,
+      'localSettings.json',
+    );
+
+    this.loadLocalSettings();
   }
 
   private get settings(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration('repo-code-assistant');
   }
 
-  // Generic getter
+  /**
+   * Load local settings from file
+   * @private
+   */
+  private loadLocalSettings(): void {
+    if (fs.existsSync(this.localSettingsPath)) {
+      const data = fs.readFileSync(this.localSettingsPath, 'utf8');
+      const loadedLocalSettings = JSON.parse(data);
+      this.localSettings = { ...this.localSettings, ...loadedLocalSettings };
+    }
+  }
+
+  /**
+   * Save local settings to file
+   * @private
+   */
+  private saveLocalSettings(): void {
+    const data = JSON.stringify(this.localSettings, null, 2);
+    fs.writeFileSync(this.localSettingsPath, data, 'utf8');
+  }
+
+  /**
+   * Get the instance of the SettingsManager
+   * @param context - The extension context
+   */
+  public static getInstance(context: vscode.ExtensionContext): SettingsManager {
+    if (!this.instance) {
+      this.instance = new SettingsManager(context);
+    }
+    return this.instance;
+  }
+
+  /**
+   * Get a setting in the extension settings
+   * @param setting - The setting to get must be a key of ExtensionSettings
+   */
   public get<T extends keyof ExtensionSettings>(
     setting: T,
   ): ExtensionSettings[T] {
+    // Check if the setting is local
+    if (setting in this.defaultLocalSettings) {
+      return this.localSettings[
+        setting as keyof ExtensionSettingsLocal
+      ] as ExtensionSettings[T];
+    }
     return this.settings.get<ExtensionSettings[T]>(
       setting,
-      this.defaultSettings()[setting],
+      this.defaultSettings[setting],
     );
   }
 
-  // Generic setter
+  /**
+   * Set a setting in the extension settings
+   * @param setting - The setting to set must be a key of ExtensionSettings
+   * @param value - The value to set must be of the same type as the setting
+   */
   public set<T extends keyof ExtensionSettings>(
     setting: T,
     value: ExtensionSettings[T],
   ): Thenable<void> {
+    // Check if the setting is local
+    if (setting in this.defaultLocalSettings) {
+      this.localSettings[setting as keyof ExtensionSettingsLocal] =
+        value as any;
+
+      this.saveLocalSettings();
+      return Promise.resolve();
+    }
     return this.settings.update(
       setting,
       value,
       vscode.ConfigurationTarget.Global,
     );
   }
-
-  // For Custom models
-  public getCustomModels(): CustomModelSettings[] {
-    return this.get('customModels') || [];
-  }
-
-  public getSelectedCustomModel(): CustomModelSettings | undefined {
-    const selectedModelName = this.get('selectedCustomModel');
-    return this.getCustomModels().find(
-      (model) => model.name === selectedModelName,
-    );
-  }
-
-  public selectCustomModel(modelName: string): void {
-    const customModels = this.getCustomModels();
-    if (customModels.find((m) => m.name === modelName)) {
-      this.set('selectedCustomModel', modelName).then();
-    }
-  }
-
-  // For Custom voice reference settings
-  public getGptSoVitsAvailableReferenceVoices(): GptSoVitsVoiceSetting[] {
-    return this.get('gptSoVitsAvailableReferenceVoices') || [];
-  }
-
-  public getSelectedGptSoVitsReferenceVoice():
-    | GptSoVitsVoiceSetting
-    | undefined {
-    const selectedVoiceName = this.get('selectedGptSoVitsReferenceVoice');
-    return this.getGptSoVitsAvailableReferenceVoices().find(
-      (voice) => voice.name === selectedVoiceName,
-    );
-  }
-
-  public selectGptSoVitsReferenceVoice(voiceName: string): void {
-    const voices = this.getGptSoVitsAvailableReferenceVoices();
-    if (voices.find((v) => v.name === voiceName)) {
-      this.set('selectedGptSoVitsReferenceVoice', voiceName).then();
-    }
-  }
-
-  // Default settings values
-  private defaultSettings(): ExtensionSettings {
-    return {
-      enableModel: {
-        gemini: false,
-        openai: false,
-        cohere: false,
-        groq: false,
-        huggingFace: false,
-        ollama: false,
-        custom: false,
-      },
-      openaiApiKey: '',
-      openaiAvailableModels: ['gpt-3.5-turbo', 'gpt-4o'],
-      geminiApiKey: '',
-      geminiAvailableModels: [
-        'gemini-1.5-pro-latest',
-        'gemini-1.5-flash-latest',
-      ],
-      cohereApiKey: '',
-      cohereAvailableModels: ['command'],
-      groqApiKey: '',
-      groqAvailableModels: [
-        'llama3-70b-8192',
-        'llama3-8b-8192',
-        'mixtral-8x7b-32768',
-        'gemma-7b-it',
-      ],
-      huggingFaceApiKey: '',
-      huggingFaceAvailableModels: ['HuggingFaceH4/zephyr-7b-beta'],
-      ollamaClientHost: 'http://localhost:11434',
-      ollamaAvailableModels: ['llama2'],
-      lastUsedModel: 'gemini',
-      customModels: [],
-      selectedCustomModel: '',
-      selectedVoiceToTextService: 'not set',
-      selectedTextToVoiceService: 'not set',
-      gptSoVitsClientHost: '',
-      gptSoVitsAvailableReferenceVoices: [],
-      selectedGptSoVitsReferenceVoice: '',
-      themePrimaryColor: '#f0f0f0',
-      themeAlgorithm: 'darkAlgorithm',
-      themeBorderRadius: 4,
-      hljsTheme: 'darcula',
-    };
-  }
 }
-
-export default SettingsManager;

@@ -1,14 +1,9 @@
-import {
-  CustomModelSettings,
-  ExtensionSettings,
-  GptSoVitsVoiceSetting,
-} from './extensionSettings';
+import { CustomModelSettings, ExtensionSettings } from './extensionSettings';
 import {
   ConversationHistory,
   ConversationHistoryList,
 } from './conversationHistory';
 import { ModelServiceType } from './modelServiceType';
-import { VoiceServiceType } from './voiceServiceType';
 
 /**
  * Represents the API request structure for the view.
@@ -83,23 +78,21 @@ export type ViewApi = {
   alertMessage: (msg: string, type: 'info' | 'warning' | 'error') => void;
 
   /**
-   * Send a message to Example B.
-   * @param msg - The message to send.
-   */
-  sendMessageToExampleB: (msg: string) => void;
-
-  /**
    * Get the response for a query.
-   * @param query - The query to get a response for.
-   * @param modelType - The type of the model to use.
-   * @param useStream - Whether to use the stream response.
-   * @param currentEntryID - The current entry ID.
+   * @param modelType - The type of the model to get the response for.
+   * @param query - The query to get the response for.
+   * @param images - The image paths to use for the query, if not provided, the query will be used without images.
+   * @param currentEntryID - The current entry ID, if not provided, the history will be used from the latest entry.
+   * @param useStream - Whether to use streaming for the response.
+   * @param useStatus - Whether to show the status if the model is using tools.
    */
   getLanguageModelResponse: (
-    query: string,
     modelType: ModelServiceType,
-    useStream?: boolean,
+    query: string,
+    images?: string[],
     currentEntryID?: string,
+    useStream?: boolean,
+    showStatus?: boolean,
   ) => Promise<string>;
 
   /**
@@ -131,12 +124,6 @@ export type ViewApi = {
     entryID: string,
     newMessage: string,
   ) => void;
-
-  /**
-   * Send a stream response chunk.
-   * @param msg - The message chunk to add.
-   */
-  sendStreamResponse: (msg: string) => void;
 
   /**
    * Add a conversation entry to the conversation history for a language model.
@@ -198,14 +185,27 @@ export type ViewApi = {
   getAvailableModels: (modelType: ModelServiceType) => string[];
 
   /**
+   * Get the current model for a language model.
+   * @param modelType - The type of the model to get the current model for.
+   */
+  getCurrentModel: (modelType: ModelServiceType) => string;
+
+  /**
    * Set the available models for a language model.
    * @param modelType - The type of the model to set the available models for.
    * @param newAvailableModels - The new available models.
    */
   setAvailableModels: (
-    modelType: ModelServiceType,
+    modelType: Exclude<ModelServiceType, 'custom'>,
     newAvailableModels: string[],
   ) => void;
+
+  /**
+   * Set the custom models.
+   * @param newCustomModels - The new custom models.
+   * @returns The new custom models.
+   */
+  setCustomModels: (newCustomModels: CustomModelSettings[]) => void;
 
   /**
    * Switch to a different model.
@@ -213,21 +213,6 @@ export type ViewApi = {
    * @param modelName - The name of the model to switch to.
    */
   switchModel: (modelType: ModelServiceType, modelName: string) => void;
-
-  /**
-   * Get the response for a query with an image.
-   * @param query - The query to get a response for.
-   * @param modelType - The type of the model to use.
-   * @param images - The images paths to use.
-   * @param currentEntryID - The current entry ID.
-   * @returns The response.
-   */
-  getLanguageModelResponseWithImage: (
-    query: string,
-    modelType: ModelServiceType,
-    images: string[],
-    currentEntryID?: string,
-  ) => Promise<string>;
 
   /**
    * Get the latest available model names.
@@ -254,53 +239,32 @@ export type ViewApi = {
    * Get the webview URI for a path.
    * @param absolutePath - The absolute path to get the URI for.
    */
-  getWebviewUri: (absolutePath: string) => string;
-
-  /**
-   * Get the custom models settings list.
-   */
-  getCustomModels: () => CustomModelSettings[];
-
-  /**
-   * Set the custom models settings list.
-   * @param newCustomModelSettings - The new custom model settings.
-   */
-  setCustomModels: (newCustomModelSettings: CustomModelSettings[]) => void;
+  getWebviewUri: (absolutePath: string) => Promise<string>;
 
   /**
    * Convert text to voice and play it.
-   * @param voiceServiceType - The type of the voice service to use.
    * @param text - The text to convert to voice.
    */
-  convertTextToVoice: (
-    voiceServiceType: VoiceServiceType,
-    text: string,
-  ) => Promise<void>;
+  convertTextToVoice: (text: string) => Promise<void>;
 
   /**
    * Start recording voice.
    * After recording, the voice will be converted to text.
-   * @param voiceServiceType - The type of the voice service to use.
    * @returns The recorded voice as text.
    */
-  convertVoiceToText: (voiceServiceType: VoiceServiceType) => Promise<string>;
+  convertVoiceToText: () => Promise<string>;
 
   /**
    * Stop the voice which is being played.
    * @param voiceServiceType - The type of the voice service to stop.
    */
-  stopPlayVoice: (voiceServiceType: VoiceServiceType) => void;
+  stopPlayVoice: () => void;
 
   /**
    * Switch the reference voice for GPT-SoVits.
    * @param voiceName - The name of the reference voice to switch to.
    */
   switchGptSoVitsReferenceVoice: (voiceName: string) => void;
-
-  /**
-   * Get the selected reference voice for GPT-SoVits.
-   */
-  getSelectedGptSoVitsReferenceVoice: () => GptSoVitsVoiceSetting | undefined;
 
   /**
    * Open an external link in the default browser.
@@ -314,14 +278,14 @@ export type ViewApi = {
  */
 export type ViewEvents = {
   /**
-   * Example event A.
-   * @param a - Example parameter A.
+   * Stream response event.
+   * @param message - The message chunk to stream.
    */
-  exampleBMessage: (a: string) => void;
+  streamResponse: (message: string) => void;
 
   /**
-   * Stream response event.
-   * @param a - The message chunk to stream.
+   * Update status event.
+   * @param status - The status to update.
    */
-  streamResponse: (a: string) => void;
+  updateStatus: (status: string) => void;
 };
